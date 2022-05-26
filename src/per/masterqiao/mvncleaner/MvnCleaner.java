@@ -20,9 +20,12 @@ public class MvnCleaner {
 
 	public static void main(String[] args) {
 		CommandLineParser cliParser = new DefaultParser();
+
 		Options opts = new Options();
 		opts.addRequiredOption("d", null, true, "mvn repository directory");
 		opts.addOption("D", false, "delete directly");
+		opts.addOption("c", true, "contents to delete");
+
 		CommandLine cli = null;
 		try {
 			cli = cliParser.parse(opts, args);
@@ -32,12 +35,11 @@ public class MvnCleaner {
 		}
 
 		String rootPath = null;
-		if (cli.hasOption("d")) {
-			rootPath = cli.getOptionValue("d");
-		} else {
+		if (!cli.hasOption("d")) {
 			System.err.println("Must specify mvn repository directory with -d xxx");
 			return;
 		}
+		rootPath = cli.getOptionValue("d");
 
 		File rootFile = new File(rootPath);
 		if (!rootFile.exists()) {
@@ -45,6 +47,16 @@ public class MvnCleaner {
 		}
 
 		boolean delDirectly = cli.hasOption("D");
+
+		// L lastUpadated files
+		// R remote.repositories files
+		// A Alone files without sha1 file
+		// C corrupted files
+		String contents = cli.hasOption("c") ? cli.getOptionValue("c") : "LRAC";
+		boolean delL = contents.contains("L");
+		boolean delR = contents.contains("R");
+		boolean delA = contents.contains("A");
+		boolean delC = contents.contains("C");
 
 		MessageDigest sha1Md = DigestUtils.getSha1Digest();
 		DigestUtils digestUtils = new DigestUtils(sha1Md);
@@ -60,12 +72,29 @@ public class MvnCleaner {
 				String filename = file.getName();
 				if (file.isDirectory()) {
 					dirs.push(file);
-				} else if (!filename.endsWith(".sha1")) {
-					File verifyFile = new File(dir, filename + ".sha1");
-					if (!verifyFile.exists()) {
-						System.out.println("[Alone] " + file.getAbsolutePath());
+					continue;
+				}
+
+				if (filename.endsWith("lastUpdated.properties")) {
+					if (delL) {
 						toDels.add(file);
-					} else {
+					}
+					continue;
+				}
+
+				if (filename.endsWith("_remote.repositories")) {
+					if (delR) {
+						toDels.add(file);
+					}
+					continue;
+				}
+
+				if (!filename.endsWith(".sha1")) {
+					File verifyFile = new File(dir, filename + ".sha1");
+					if (verifyFile.exists()) {
+						if (!delC) {
+							continue;
+						}
 						String actual = "actual";
 						String expected = "expected";
 						try {
@@ -74,10 +103,16 @@ public class MvnCleaner {
 						} catch (IOException e) {
 							e.printStackTrace();
 						}
+
 						if (!expected.startsWith(actual)) {
 							System.out.println("[Corrupted] " + file.getAbsolutePath());
 							toDels.add(file);
 							toDels.add(verifyFile);
+						}
+					} else {
+						System.out.println("[Alone] " + file.getAbsolutePath());
+						if (delA) {
+							toDels.add(file);
 						}
 					}
 				} else {
@@ -85,7 +120,9 @@ public class MvnCleaner {
 					File dataFile = new File(dir, dataFilename);
 					if (!dataFile.exists()) {
 						System.out.println("[Alone] " + file.getAbsolutePath());
-						toDels.add(file);
+						if (delA) {
+							toDels.add(file);
+						}
 					}
 				}
 			}
